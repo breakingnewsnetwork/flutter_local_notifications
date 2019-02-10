@@ -32,6 +32,7 @@ A cross platform plugin for displaying local notifications.
     * Big picture
     * Big text
     * Inbox
+    * Messaging
 * [Android] Group notifications
 * [Android] Show progress notifications
 * [iOS] Customise the permissions to be requested around displaying notifications
@@ -44,7 +45,7 @@ Note that this plugin aims to provide abstractions for all platforms as opposed 
 ## Acknowledgements
 
 * [Javier Lecuona](https://github.com/javiercbk) for submitting the PR that added the ability to have notifications shown daily
-* [Jeff Scaturro](https://github.com/JeffScaturro) for submitting the PR to fix the iOS issue around showing daily and weekly notifications
+* [Jeff Scaturro](https://github.com/JeffScaturro) for submitting the PR to fix the iOS issue around showing daily and weekly notifications and migrating the plugin to AndroidX
 * [Ian Cavanaugh](https://github.com/icavanaugh95) for helping create a sample to reproduce the problem reported in [issue #88](https://github.com/MaikuB/flutter_local_notifications/issues/88)
 
 ## Raising issues and contributions
@@ -61,12 +62,13 @@ The following samples will demonstrate the more commonly used functionalities. T
 
 ```dart
 FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = new FlutterLocalNotificationsPlugin();
+// initialise the plugin. app_icon needs to be a added as a drawable resource to the Android head project
 var initializationSettingsAndroid =
     new AndroidInitializationSettings('app_icon');
-var initializationSettingsIOS = new IOSInitializationSettings();
+var initializationSettingsIOS = new IOSInitializationSettings(
+    onDidReceiveLocalNotificationCallback: onDidRecieveLocationLocation);
 var initializationSettings = new InitializationSettings(
     initializationSettingsAndroid, initializationSettingsIOS);
-flutterLocalNotificationsPlugin = new FlutterLocalNotificationsPlugin();
 flutterLocalNotificationsPlugin.initialize(initializationSettings,
     onSelectNotification: onSelectNotification);
 ```
@@ -296,28 +298,6 @@ When specifying the large icon bitmap or big picture bitmap (associated with the
 
 Note that with Android 8.0+, sounds and vibrations are associated with notification channels and can only be configured when they are first created. Showing/scheduling a notification will create a channel with the specified id if it doesn't exist already. If another notification specifies the same channel id but tries to specify another sound or vibration pattern then nothing occurs.
 
-If you run into error messages around the `com.android.support:support-compat` library due to version conflicts, you can try adding the following to the `build.gradle` file of your Android head project as reported by another dev [here](https://github.com/MaikuB/flutter_local_notifications/issues/5)
-
-```gradle
-allprojects {
-    repositories {
-       //...
-    }
-    subprojects {
-        project.configurations.all {
-            resolutionStrategy.eachDependency { details ->
-                if (details.requested.group == 'com.android.support'
-                        && !details.requested.name.contains('multidex') ) {
-                    details.useVersion "27.1.1"
-                }
-            }
-        }
-    }
-}
-```
-
-Note though this will force other plugins to use the same version of the library that this plugin depends on so may not be desirable. If you have another suggestion on how to solve this please do let me know :)
-
 When doing a release build of your app, you'll likely need to customise your ProGuard configuration file as per this [link](https://developer.android.com/studio/build/shrink-code#keep-code) and add the following line
 
 ```
@@ -326,48 +306,51 @@ When doing a release build of your app, you'll likely need to customise your Pro
 
 ## iOS Integration
 
-By design, iOS applications do not display notifications when they're in the foreground. For iOS 10+, use the presentation options to control the behaviour for when a notification is triggered while the app is in the foreground. For older versions of iOS, you will need update the AppDelegate class to handle when a local notification is received to display an alert. This is shown in the sample app within the `didReceiveLocalNotification` method of the `AppDelegate` class. The notification title can be found by looking up the `title` within the `userInfo` dictionary of the `UILocalNotification` object
+By design, iOS applications do not display notifications when they're in the foreground. For iOS 10+, use the presentation options to control the behaviour for when a notification is triggered while the app is in the foreground. For older versions of iOS, you need to handle the callback as part of specifying the method that should be fired to the `onDidReceiveLocalNotification` argument when creating an instance `IOSInitializationSettings` object that is passed to the function for initializing the plugin. A snippet below from the sample app shows how this can be done
 
-```objc
-#import <flutter_local_notifications/FlutterLocalNotificationsPlugin.h>
+```dart
+// initialise the plugin. app_icon needs to be a added as a drawable resource to the Android head project
+var initializationSettingsAndroid =
+    new AndroidInitializationSettings('app_icon');
+var initializationSettingsIOS = new IOSInitializationSettings(
+    onDidReceiveLocalNotification: onDidRecieveLocalNotification);
+var initializationSettings = new InitializationSettings(
+    initializationSettingsAndroid, initializationSettingsIOS);
+flutterLocalNotificationsPlugin.initialize(initializationSettings,
+    onSelectNotification: onSelectNotification);
 
 ...
 
-- (void)application:(UIApplication *)application didReceiveLocalNotification:(UILocalNotification *)notification
-{
-    if(@available(iOS 10.0, *)) {
-        return;
-    }
-    
-    NSString *payload = notification.userInfo[@"payload"];
-    if(FlutterLocalNotificationsPlugin.resumingFromBackground) {
-        // resuming from the background so don't want to show an alert as we would've seen
-        // the notification while the app was in the background
-        [FlutterLocalNotificationsPlugin handleSelectNotification:payload];
-        return;
-    }
-    
-    // display the alert as the app was in the foreground so notification wouldn't be displayed.
-    // when the user taps on OK, fire the code in our Flutter app that is responsible for handling
-    // the action for when the user taps on a notification
-    NSString *title = notification.userInfo[@"title"];
-    UIAlertController* alert = [UIAlertController alertControllerWithTitle:title
-                                                                   message:notification.alertBody
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    
-    UIAlertAction* defaultAction = [UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault
-                                                          handler:^(UIAlertAction * action) {
-                                                              [FlutterLocalNotificationsPlugin handleSelectNotification:payload];
-                                                          }];
-    
-    [alert addAction:defaultAction];
-    [[[[UIApplication sharedApplication] keyWindow] rootViewController] presentViewController:alert animated:YES completion:nil];
-}
+  Future onDidRecieveLocalNotification(
+      int id, String title, String body, String payload) async {
+    // display a dialog with the notification details, tap ok to go to another page
+    showDialog(
+      context: context,
+      builder: (BuildContext context) => new CupertinoAlertDialog(
+            title: new Text(title),
+            content: new Text(body),
+            actions: [
+              CupertinoDialogAction(
+                isDefaultAction: true,
+                child: new Text('Ok'),
+                onPressed: () async {
+                  Navigator.of(context, rootNavigator: true).pop();
+                  await Navigator.push(
+                    context,
+                    new MaterialPageRoute(
+                      builder: (context) => new SecondScreen(payload),
+                    ),
+                  );
+                },
+              )
+            ],
+          ),
+    );
+  }
+
 ```
 
-In theory, it should be possible for the plugin to handle this but this the method doesn't seem to fire. The Flutter team has acknowledged that the method hasn't been wired up to enable this https://github.com/flutter/flutter/issues/16662
-
-Also if you have set notifications to be periodically shown, then on older iOS versions (< 10), if the application was uninstalled without cancelling all alarms then the next time it's installed you may see the "old" notifications being fired. If this is not the desired behaviour, then you can add the following to the `didFinishLaunchingWithOptions` method of your `AppDelegate` class.
+If you have set notifications to be periodically shown, then on older iOS versions (< 10), if the application was uninstalled without cancelling all alarms then the next time it's installed you may see the "old" notifications being fired. If this is not the desired behaviour, then you can add the following to the `didFinishLaunchingWithOptions` method of your `AppDelegate` class.
 
 ```objc
 if(![[NSUserDefaults standardUserDefaults]objectForKey:@"Notification"]){

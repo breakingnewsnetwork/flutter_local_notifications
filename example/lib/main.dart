@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
@@ -30,13 +32,16 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  var platform = MethodChannel('crossingthestreams.io/resourceResolver');
+
   @override
   initState() {
     super.initState();
     // initialise the plugin. app_icon needs to be a added as a drawable resource to the Android head project
     var initializationSettingsAndroid =
         new AndroidInitializationSettings('app_icon');
-    var initializationSettingsIOS = new IOSInitializationSettings(registerUNUserNotificationCenterDelegate: false);
+    var initializationSettingsIOS = new IOSInitializationSettings(
+        onDidReceiveLocalNotification: onDidRecieveLocalNotification);
     var initializationSettings = new InitializationSettings(
         initializationSettingsAndroid, initializationSettingsIOS);
     flutterLocalNotificationsPlugin.initialize(initializationSettings,
@@ -139,6 +144,16 @@ class _HomePageState extends State<HomePage> {
                   new Padding(
                     padding: new EdgeInsets.fromLTRB(0.0, 0.0, 0.0, 8.0),
                     child: new RaisedButton(
+                      child: new Text(
+                          'Show big picture notification, hide large icon on expand [Android]'),
+                      onPressed: () async {
+                        await _showBigPictureNotificationHideExpandedLargeIcon();
+                      },
+                    ),
+                  ),
+                  new Padding(
+                    padding: new EdgeInsets.fromLTRB(0.0, 0.0, 0.0, 8.0),
+                    child: new RaisedButton(
                       child: new Text('Show big text notification [Android]'),
                       onPressed: () async {
                         await _showBigTextNotification();
@@ -151,6 +166,15 @@ class _HomePageState extends State<HomePage> {
                       child: new Text('Show inbox notification [Android]'),
                       onPressed: () async {
                         await _showInboxNotification();
+                      },
+                    ),
+                  ),
+                  new Padding(
+                    padding: new EdgeInsets.fromLTRB(0.0, 0.0, 0.0, 8.0),
+                    child: new RaisedButton(
+                      child: new Text('Show messaging notification [Android]'),
+                      onPressed: () async {
+                        await _showMessagingNotification();
                       },
                     ),
                   ),
@@ -283,17 +307,20 @@ class _HomePageState extends State<HomePage> {
         '<b>silent</b> body', platformChannelSpecifics);
   }
 
-  Future _showBigPictureNotification() async {
+  Future<String> _downloadAndSaveImage(String url, String fileName) async {
     var directory = await getApplicationDocumentsDirectory();
-    var largeIconResponse = await http.get('http://via.placeholder.com/48x48');
-    var largeIconPath = '${directory.path}/largeIcon';
-    var file = new File(largeIconPath);
-    await file.writeAsBytes(largeIconResponse.bodyBytes);
-    var bigPictureResponse =
-        await http.get('http://via.placeholder.com/400x800');
-    var bigPicturePath = '${directory.path}/bigPicture';
-    file = new File(bigPicturePath);
-    await file.writeAsBytes(bigPictureResponse.bodyBytes);
+    var filePath = '${directory.path}/$fileName';
+    var response = await http.get(url);
+    var file = new File(filePath);
+    await file.writeAsBytes(response.bodyBytes);
+    return filePath;
+  }
+
+  Future _showBigPictureNotification() async {
+    var largeIconPath = await _downloadAndSaveImage(
+        'http://via.placeholder.com/48x48', 'largeIcon');
+    var bigPicturePath = await _downloadAndSaveImage(
+        'http://via.placeholder.com/400x800', 'bigPicture');
     var bigPictureStyleInformation = new BigPictureStyleInformation(
         bigPicturePath, BitmapSource.FilePath,
         largeIcon: largeIconPath,
@@ -306,6 +333,32 @@ class _HomePageState extends State<HomePage> {
         'big text channel id',
         'big text channel name',
         'big text channel description',
+        style: AndroidNotificationStyle.BigPicture,
+        styleInformation: bigPictureStyleInformation);
+    var platformChannelSpecifics =
+        new NotificationDetails(androidPlatformChannelSpecifics, null);
+    await flutterLocalNotificationsPlugin.show(
+        0, 'big text title', 'silent body', platformChannelSpecifics);
+  }
+
+  Future _showBigPictureNotificationHideExpandedLargeIcon() async {
+    var largeIconPath = await _downloadAndSaveImage(
+        'http://via.placeholder.com/48x48', 'largeIcon');
+    var bigPicturePath = await _downloadAndSaveImage(
+        'http://via.placeholder.com/400x800', 'bigPicture');
+    var bigPictureStyleInformation = new BigPictureStyleInformation(
+        bigPicturePath, BitmapSource.FilePath,
+        hideExpandedLargeIcon: true,
+        contentTitle: 'overridden <b>big</b> content title',
+        htmlFormatContentTitle: true,
+        summaryText: 'summary <i>text</i>',
+        htmlFormatSummaryText: true);
+    var androidPlatformChannelSpecifics = new AndroidNotificationDetails(
+        'big text channel id',
+        'big text channel name',
+        'big text channel description',
+        largeIcon: largeIconPath,
+        largeIconBitmapSource: BitmapSource.FilePath,
         style: AndroidNotificationStyle.BigPicture,
         styleInformation: bigPictureStyleInformation);
     var platformChannelSpecifics =
@@ -352,6 +405,68 @@ class _HomePageState extends State<HomePage> {
         new NotificationDetails(androidPlatformChannelSpecifics, null);
     await flutterLocalNotificationsPlugin.show(
         0, 'inbox title', 'inbox body', platformChannelSpecifics);
+  }
+
+  Future _showMessagingNotification() async {
+    // use a platform channel to resolve an Android drawable resource to a URI.
+    // This is NOT part of the notifications plugin. Calls made over this channel is handled by the app
+    String imageUri = await platform.invokeMethod('drawableToUri', 'food');
+    var messages = List<Message>();
+    // First two person objects will use icons that part of the Android app's drawable resources
+    var me = Person(
+        name: 'Me',
+        key: '1',
+        uri: 'tel:1234567890',
+        icon: 'me',
+        iconSource: IconSource.Drawable);
+    var coworker = Person(
+        name: 'Coworker',
+        key: '2',
+        uri: 'tel:9876543210',
+        icon: 'coworker',
+        iconSource: IconSource.Drawable);
+    // download the icon that would be use for the lunch bot person
+    var largeIconPath = await _downloadAndSaveImage(
+        'http://via.placeholder.com/48x48', 'largeIcon');
+    // this person object will use an icon that was downloaded
+    var lunchBot = Person(
+        name: 'Lunch bot',
+        key: 'bot',
+        bot: true,
+        icon: largeIconPath,
+        iconSource: IconSource.FilePath);
+    messages.add(Message('Hi', DateTime.now(), null));
+    messages.add(Message(
+        'What\'s up?', DateTime.now().add(Duration(minutes: 5)), coworker));
+    messages.add(Message(
+        'Lunch?', DateTime.now().add(Duration(minutes: 10)), null,
+        dataMimeType: 'image/png', dataUri: imageUri));
+    messages.add(Message('What kind of food would you prefer?',
+        DateTime.now().add(Duration(minutes: 10)), lunchBot));
+    var messagingStyle = MessagingStyleInformation(me,
+        groupConversation: true,
+        conversationTitle: 'Team lunch',
+        htmlFormatContent: true,
+        htmlFormatTitle: true,
+        messages: messages);
+    var androidPlatformChannelSpecifics = new AndroidNotificationDetails(
+        'message channel id',
+        'message channel name',
+        'message channel description',
+        style: AndroidNotificationStyle.Messaging,
+        styleInformation: messagingStyle);
+    var platformChannelSpecifics =
+        new NotificationDetails(androidPlatformChannelSpecifics, null);
+    await flutterLocalNotificationsPlugin.show(
+        0, 'message title', 'message body', platformChannelSpecifics);
+
+    // wait 10 seconds and add another message to simulate another response
+    await Future.delayed(Duration(seconds: 10), () async {
+      messages.add(
+          Message('Thai', DateTime.now().add(Duration(minutes: 11)), null));
+      await flutterLocalNotificationsPlugin.show(
+          0, 'message title', 'message body', platformChannelSpecifics);
+    });
   }
 
   Future _showGroupedNotifications() async {
@@ -543,6 +658,33 @@ class _HomePageState extends State<HomePage> {
 
   String _toTwoDigitString(int value) {
     return value.toString().padLeft(2, '0');
+  }
+
+  Future onDidRecieveLocalNotification(
+      int id, String title, String body, String payload) async {
+    // display a dialog with the notification details, tap ok to go to another page
+    showDialog(
+      context: context,
+      builder: (BuildContext context) => new CupertinoAlertDialog(
+            title: new Text(title),
+            content: new Text(body),
+            actions: [
+              CupertinoDialogAction(
+                isDefaultAction: true,
+                child: new Text('Ok'),
+                onPressed: () async {
+                  Navigator.of(context, rootNavigator: true).pop();
+                  await Navigator.push(
+                    context,
+                    new MaterialPageRoute(
+                      builder: (context) => new SecondScreen(payload),
+                    ),
+                  );
+                },
+              )
+            ],
+          ),
+    );
   }
 }
 
